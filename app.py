@@ -26,14 +26,15 @@ def load_data():
     df['combined_features'] = df['listed_in'] + " " + df['description'] + " " + df['cast']
     return df
 
-df = load_data()
-
-# --- ALGORITHME (Calculé une seule fois grâce au cache) ---
-@st.cache_resource
-def compute_similarity(data):
-    tfidf = TfidfVectorizer(stop_words='english')
-    tfidf_matrix = tfidf.fit_transform(data['combined_features'])
-    return cosine_similarity(tfidf_matrix, tfidf_matrix)
+@st.cache_data
+def load_data():
+    # Nouveau lien vérifié
+    url = "https://raw.githubusercontent.com/shivamb/netflix-shows/master/netflix_titles.csv"
+    df = pd.read_csv(url)
+    df = df.fillna('')
+    # On combine les infos pour l'algorithme
+    df['combined_features'] = df['listed_in'] + " " + df['description'] + " " + df['cast']
+    return df
 
 cosine_sim = compute_similarity(df)
 
