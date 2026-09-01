@@ -2,60 +2,57 @@ import streamlit as st
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+import io
 
-# --- CONFIGURATION ---
 st.set_page_config(page_title="Netflix Finder", page_icon="🍿")
+
+# --- DONNÉES INTÉGRÉES (Pour être sûr que ça marche) ---
+csv_data = """type,title,listed_in,description
+Movie,Dick Johnson Is Dead,Documentaries,As a daughter nears a milestone she stages her father's death.
+TV Show,Blood & Water,"International TV Shows, TV Dramas",A teen sets out to prove if a swimming star is her abducted sister.
+TV Show,Ganglands,"Crime TV Shows, Action",A skilled thief and his team are pulled into a deadly turf war.
+TV Show,Jailbirds New Orleans,"Docuseries, Reality TV",Feuds and flirtations abound among incarcerated women.
+TV Show,Midnight Mass,"TV Dramas, TV Horror",A charismatic priest brings miracles and mysteries to a dying town.
+Movie,My Little Pony,"Children & Family Movies",A hero believes ponies and unicorns should be friends.
+Movie,Sankofa,"Dramas, International",An enslaved woman journeys back in time to experience the past.
+Movie,The Starling,Comedies,A woman adjusting to loss battles a cheeky bird in her garden.
+Movie,Jeux d'enfants,"Dramas, Romantic",A childhood game of dare continues into adulthood.
+Movie,Inception,"Action, Sci-Fi",A thief who steals secrets through dreams is given a final chance.
+"""
 
 @st.cache_data
 def load_data():
-    # Liste de liens de secours au cas où l'un tombe en 404
-    links = [
-        "https://raw.githubusercontent.com/diego-vicente/netflix-report/master/data/netflix_titles.csv",
-        "https://raw.githubusercontent.com/shivamb/netflix-shows/master/netflix_titles.csv",
-        "https://raw.githubusercontent.com/611683930/Netflix-Visualizations-Recommendation/master/netflix_titles.csv"
-    ]
-    
-    for url in links:
-        try:
-            df = pd.read_csv(url)
-            df = df.fillna('')
-            # Création de la soupe de mots pour l'algorithme
-            df['combined'] = df['listed_in'] + " " + df['description'] + " " + df['cast']
-            return df
-        except:
-            continue
-    return None
+    # On lit le texte ci-dessus comme si c'était un fichier
+    df = pd.read_csv(io.StringIO(csv_data))
+    df = df.fillna('')
+    df['combined'] = df['listed_in'] + " " + df['description']
+    return df
 
-# Chargement
 df = load_data()
 
-if df is None:
-    st.error("⚠️ Impossible de charger les données. Veuillez vérifier votre connexion ou réessayer plus tard.")
-else:
-    # --- CALCUL ---
-    @st.cache_resource
-    def get_sim_matrix(_data):
-        tfidf = TfidfVectorizer(stop_words='english')
-        matrix = tfidf.fit_transform(_data['combined'])
-        return cosine_similarity(matrix, matrix)
+# --- CALCUL ---
+@st.cache_resource
+def get_sim_matrix(_data):
+    tfidf = TfidfVectorizer(stop_words='english')
+    matrix = tfidf.fit_transform(_data['combined'])
+    return cosine_similarity(matrix, matrix)
 
-    cosine_sim = get_sim_matrix(df)
+cosine_sim = get_sim_matrix(df)
 
-    # --- INTERFACE ---
-    st.title("🎬 Mon Recommandeur Netflix")
+# --- INTERFACE ---
+st.title("🎬 Mon Recommandeur Netflix")
+st.write("L'application fonctionne avec un échantillon de test !")
+
+title = st.selectbox("Choisissez un film/série :", df['title'].values)
+
+if st.button("Trouver des idées"):
+    idx = df[df['title'] == title].index[0]
+    scores = list(enumerate(cosine_sim[idx]))
+    scores = sorted(scores, key=lambda x: x[1], reverse=True)[1:4]
     
-    title = st.selectbox("Quel film/série avez-vous aimé ?", df['title'].values)
-
-    if st.button("Trouver des idées"):
-        idx = df[df['title'] == title].index[0]
-        scores = list(enumerate(cosine_sim[idx]))
-        scores = sorted(scores, key=lambda x: x[1], reverse=True)[1:7]
-        
-        st.write("### Voici des titres similaires :")
-        cols = st.columns(2)
-        for i, s in enumerate(scores):
-            movie = df.iloc[s[0]]
-            with cols[i % 2]:
-                st.success(f"**{movie['title']}**")
-                st.write(f"*{movie['listed_in']}*")
-                st.caption(movie['description'][:150] + "...")
+    st.write("### Recommandations :")
+    for i, s in enumerate(scores):
+        movie = df.iloc[s[0]]
+        st.success(f"**{movie['title']}**")
+        st.caption(f"Genre: {movie['listed_in']}")
+        st.write(movie['description'])
