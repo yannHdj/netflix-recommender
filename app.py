@@ -2,57 +2,87 @@ import streamlit as st
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-import io
 
-st.set_page_config(page_title="Netflix Finder", page_icon="🍿")
-
-# --- DONNÉES INTÉGRÉES (Pour être sûr que ça marche) ---
-csv_data = """type,title,listed_in,description
-Movie,Dick Johnson Is Dead,Documentaries,As a daughter nears a milestone she stages her father's death.
-TV Show,Blood & Water,"International TV Shows, TV Dramas",A teen sets out to prove if a swimming star is her abducted sister.
-TV Show,Ganglands,"Crime TV Shows, Action",A skilled thief and his team are pulled into a deadly turf war.
-TV Show,Jailbirds New Orleans,"Docuseries, Reality TV",Feuds and flirtations abound among incarcerated women.
-TV Show,Midnight Mass,"TV Dramas, TV Horror",A charismatic priest brings miracles and mysteries to a dying town.
-Movie,My Little Pony,"Children & Family Movies",A hero believes ponies and unicorns should be friends.
-Movie,Sankofa,"Dramas, International",An enslaved woman journeys back in time to experience the past.
-Movie,The Starling,Comedies,A woman adjusting to loss battles a cheeky bird in her garden.
-Movie,Jeux d'enfants,"Dramas, Romantic",A childhood game of dare continues into adulthood.
-Movie,Inception,"Action, Sci-Fi",A thief who steals secrets through dreams is given a final chance.
-"""
+# --- CONFIGURATION DE LA PAGE ---
+st.set_page_config(page_title="Netflix AI Finder", page_icon="🍿", layout="wide")
 
 @st.cache_data
 def load_data():
-    # On lit le texte ci-dessus comme si c'était un fichier
-    df = pd.read_csv(io.StringIO(csv_data))
+    # Lien stable vers le dataset complet (8800 titres)
+    url = "https://raw.githubusercontent.com/shivamb/netflix-shows/master/netflix_titles.csv"
+    df = pd.read_csv(url)
     df = df.fillna('')
-    df['combined'] = df['listed_in'] + " " + df['description']
+    # On prépare la "soupe de mots" pour l'algorithme
+    df['combined_features'] = df['listed_in'] + " " + df['description'] + " " + df['cast'] + " " + df['director']
     return df
 
 df = load_data()
 
-# --- CALCUL ---
+# --- BARRE LATÉRALE (FILTRES) ---
+st.sidebar.header("⚙️ Filtres de recherche")
+
+# Filtre par Type
+type_filter = st.sidebar.radio("Que cherchez-vous ?", ["Tout", "Movie", "TV Show"])
+
+# Filtre par Pays (on nettoie les noms de pays car certains titres en ont plusieurs)
+all_countries = set()
+for c in df['country'].unique():
+    for sub_c in str(c).split(', '):
+        if sub_c: all_countries.add(sub_c)
+
+selected_country = st.sidebar.selectbox("Filtrer par pays d'origine :", ["Tous les pays"] + sorted(list(all_countries)))
+
+# --- APPLICATION DES FILTRES ---
+filtered_df = df.copy()
+
+if type_filter != "Tout":
+    filtered_df = filtered_df[filtered_df['type'] == type_filter]
+
+if selected_country != "Tous les pays":
+    filtered_df = filtered_df[filtered_df['country'].str.contains(selected_country)]
+
+# --- MOTEUR DE RECOMMANDATION ---
 @st.cache_resource
-def get_sim_matrix(_data):
+def compute_sim(data):
     tfidf = TfidfVectorizer(stop_words='english')
-    matrix = tfidf.fit_transform(_data['combined'])
-    return cosine_similarity(matrix, matrix)
+    tfidf_matrix = tfidf.fit_transform(data['combined_features'])
+    return cosine_similarity(tfidf_matrix, tfidf_matrix)
 
-cosine_sim = get_sim_matrix(df)
+# On recalcule la similarité sur les données filtrées
+if not filtered_df.empty:
+    cosine_sim = compute_sim(filtered_df.reset_index())
+    titles = filtered_df['title'].values
+else:
+    st.error("Aucun film ne correspond à ces filtres.")
+    st.stop()
 
-# --- INTERFACE ---
-st.title("🎬 Mon Recommandeur Netflix")
-st.write("L'application fonctionne avec un échantillon de test !")
+# --- INTERFACE PRINCIPALE ---
+st.title("🎬 Netflix AI Recommender")
+st.write(f"Analyse de **{len(filtered_df)}** titres disponibles pour vos critères.")
 
-title = st.selectbox("Choisissez un film/série :", df['title'].values)
+# Sélection du film de référence
+selected_movie = st.selectbox("Sélectionnez un film/série que vous aimez :", titles)
 
-if st.button("Trouver des idées"):
-    idx = df[df['title'] == title].index[0]
-    scores = list(enumerate(cosine_sim[idx]))
-    scores = sorted(scores, key=lambda x: x[1], reverse=True)[1:4]
+if st.button('Trouver des pépites similaires 🚀'):
+    # Trouver l'index dans le dataframe filtré
+    idx = filtered_df[filtered_df['title'] == selected_movie].index[0]
+    # Récupérer l'index relatif pour la matrice de similarité
+    rel_idx = list(filtered_df.index).index(idx)
     
-    st.write("### Recommandations :")
-    for i, s in enumerate(scores):
-        movie = df.iloc[s[0]]
-        st.success(f"**{movie['title']}**")
-        st.caption(f"Genre: {movie['listed_in']}")
-        st.write(movie['description'])
+    sim_scores = list(enumerate(cosine_sim[rel_idx]))
+    sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)[1:7]
+
+    st.write("---")
+    st.subheader(f"Basé sur vos goûts et vos filtres ({selected_country}) :")
+    
+    cols = st.columns(3)
+    for i, score in enumerate(sim_scores):
+        movie_idx = score[0]
+        row = filtered_df.iloc[movie_idx]
+        
+        with cols[i % 3]:
+            st.info(f"**{row['title']}**")
+            st.caption(f"📅 {row['release_year']} | 🌍 {row['country']}")
+            st.write(f"*{row['listed_in']}*")
+            with st.expander("Lire le synopsis"):
+                st.write(row['description'])
